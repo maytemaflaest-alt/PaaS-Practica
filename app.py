@@ -5,10 +5,9 @@ from datetime import datetime
 import os
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'clave_super_segura_v2')
+app.secret_key = os.environ.get('SECRET_KEY', 'clave_super_segura_v3')
 
-# USAMOS UNA NUEVA BD PARA SOPORTAR EL CHAT Y LAS NOTAS
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///campus_v2.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///campus_v3.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -35,22 +34,37 @@ class Mensaje(db.Model):
     texto = db.Column(db.Text)
     fecha = db.Column(db.String(20))
 
+# NUEVA TABLA: Mensajes Privados
+class MensajePrivado(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    remitente_id = db.Column(db.Integer)
+    remitente_nombre = db.Column(db.String(50))
+    destinatario_id = db.Column(db.Integer)
+    destinatario_nombre = db.Column(db.String(50))
+    texto = db.Column(db.Text)
+    fecha = db.Column(db.String(20))
+
 with app.app_context():
     db.create_all()
     if not User.query.first():
+        # Usuarios Base
         db.session.add(User(username='admin', password_hash=generate_password_hash('AdminSeguro2026!'), role='Administrador'))
         db.session.add(User(username='alumno', password_hash=generate_password_hash('Estudiante#1'), role='Estudiante'))
         db.session.add(User(username='profesor', password_hash=generate_password_hash('ProfeCyber24'), role='Docente'))
+        
+        # PRESERVACIÓN DE TUS DATOS (Edisson y Timoteo se auto-crearán)
+        # Nota: Les he puesto la contraseña genérica "Estudiante2026" a ambos.
+        db.session.add(User(username='Edisson', password_hash=generate_password_hash('Estudiante2026'), role='Estudiante'))
+        db.session.add(User(username='Timoteo', password_hash=generate_password_hash('Estudiante2026'), role='Estudiante'))
         db.session.commit()
 
-# --- VISTAS HTML (CON BOOTSTRAP 5 PARA DISEÑO PROFESIONAL) ---
+# --- VISTAS HTML ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <title>Campus Virtual - TEC AZUAY</title>
-    <!-- CSS Profesional via Bootstrap -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
@@ -62,11 +76,13 @@ HTML_TEMPLATE = """
         .chat-msg.admin { background-color: #fff3e0; border-left: 4px solid #f57c00; }
         .chat-msg.docente { background-color: #e8f5e9; border-left: 4px solid #388e3c; }
         .badge-role { font-size: 0.9em; }
+        .msg-privado-enviado { background-color: #f1f8e9; border-right: 4px solid #8bc34a; text-align: right; margin-bottom:10px; padding:10px; border-radius:5px;}
+        .msg-privado-recibido { background-color: #fff8e1; border-left: 4px solid #ffb300; margin-bottom:10px; padding:10px; border-radius:5px;}
     </style>
 </head>
 <body>
     {% if not user %}
-    <!-- PANTALLA DE LOGIN -->
+    <!-- LOGIN -->
     <div class="container d-flex justify-content-center align-items-center" style="height: 100vh;">
         <div class="card shadow-lg" style="width: 25rem;">
             <div class="card-body text-center p-5">
@@ -97,7 +113,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
     {% else %}
-    <!-- DASHBOARD PRINCIPAL -->
+    <!-- DASHBOARD -->
     <nav class="navbar navbar-expand-lg navbar-dark navbar-custom mb-4 shadow-sm">
         <div class="container">
             <a class="navbar-brand" href="#"><i class="fa-solid fa-graduation-cap me-2"></i> Campus Virtual PaaS</a>
@@ -120,13 +136,16 @@ HTML_TEMPLATE = """
           {% endif %}
         {% endwith %}
 
-        <!-- PESTAÑAS DE NAVEGACIÓN -->
+        <!-- PESTAÑAS -->
         <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
             <li class="nav-item">
                 <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#academico"><i class="fa-solid fa-book me-1"></i> Panel Académico</button>
             </li>
             <li class="nav-item">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#foro"><i class="fa-regular fa-comments me-1"></i> Foro de Mensajería</button>
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#foro"><i class="fa-solid fa-users me-1"></i> Foro General</button>
+            </li>
+            <li class="nav-item">
+                <button class="nav-link text-primary fw-bold" data-bs-toggle="tab" data-bs-target="#chat_privado"><i class="fa-solid fa-envelope me-1"></i> Mensajes Privados</button>
             </li>
             {% if user.role == 'Administrador' %}
             <li class="nav-item">
@@ -138,7 +157,6 @@ HTML_TEMPLATE = """
         <div class="tab-content">
             <!-- TAB: PANEL ACADÉMICO -->
             <div class="tab-pane fade show active" id="academico">
-                
                 {% if user.role == 'Estudiante' %}
                 <div class="row">
                     <div class="col-md-5">
@@ -146,16 +164,12 @@ HTML_TEMPLATE = """
                             <div class="card-header card-header-custom">Mis Asignaturas</div>
                             <ul class="list-group list-group-flush">
                                 <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div><strong>Hacking Ético</strong><br><small class="text-muted">Prof. Timoteo</small></div>
-                                    <form action="/submit_task" method="POST"><input type="hidden" name="materia" value="Hacking Ético"><button class="btn btn-sm btn-success">Entregar Trabajo</button></form>
+                                    <div><strong>Hacking Ético</strong><br><small class="text-muted">Prof. Admin</small></div>
+                                    <form action="/submit_task" method="POST"><input type="hidden" name="materia" value="Hacking Ético"><button class="btn btn-sm btn-success">Entregar</button></form>
                                 </li>
                                 <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div><strong>Defensa Perimetral</strong><br><small class="text-muted">Prof. Edisson</small></div>
-                                    <form action="/submit_task" method="POST"><input type="hidden" name="materia" value="Defensa Perimetral"><button class="btn btn-sm btn-success">Entregar Trabajo</button></form>
-                                </li>
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <div><strong>Arquitecturas Cloud</strong><br><small class="text-muted">Prof. Admin</small></div>
-                                    <form action="/submit_task" method="POST"><input type="hidden" name="materia" value="Arquitecturas Cloud"><button class="btn btn-sm btn-success">Entregar Trabajo</button></form>
+                                    <div><strong>Arquitecturas Cloud</strong><br><small class="text-muted">Prof. Docente</small></div>
+                                    <form action="/submit_task" method="POST"><input type="hidden" name="materia" value="Arquitecturas Cloud"><button class="btn btn-sm btn-success">Entregar</button></form>
                                 </li>
                             </ul>
                         </div>
@@ -165,14 +179,14 @@ HTML_TEMPLATE = """
                             <div class="card-header bg-primary text-white fw-bold">Mi Historial de Calificaciones</div>
                             <div class="card-body p-0">
                                 <table class="table table-hover m-0">
-                                    <thead class="table-light"><tr><th>Materia</th><th>Estado</th><th>Nota</th><th>Retroalimentación del Docente</th></tr></thead>
+                                    <thead class="table-light"><tr><th>Materia</th><th>Estado</th><th>Nota</th><th>Retroalimentación</th></tr></thead>
                                     <tbody>
                                         {% for t in tareas %}
                                         <tr>
                                             <td>{{ t.materia }}</td>
                                             <td><span class="badge bg-{{ 'success' if t.estado == 'Calificado' else 'warning text-dark' }}">{{ t.estado }}</span></td>
                                             <td><strong class="{% if t.nota and t.nota <= 7 %}text-danger{% else %}text-success{% endif %}">{{ t.nota if t.nota else '-' }}/10</strong></td>
-                                            <td><small class="text-muted">{{ t.feedback if t.feedback else 'Sin comentarios aún.' }}</small></td>
+                                            <td><small class="text-muted">{{ t.feedback if t.feedback else 'Sin comentarios.' }}</small></td>
                                         </tr>
                                         {% else %}
                                         <tr><td colspan="4" class="text-center p-3 text-muted">Aún no has enviado tareas.</td></tr>
@@ -186,29 +200,25 @@ HTML_TEMPLATE = """
 
                 {% elif user.role == 'Docente' or user.role == 'Administrador' %}
                 <div class="card shadow-sm">
-                    <div class="card-header bg-success text-white fw-bold">Centro de Calificaciones (Entregas Pendientes)</div>
+                    <div class="card-header bg-success text-white fw-bold">Centro de Calificaciones</div>
                     <div class="card-body p-0 table-responsive">
                         <table class="table table-striped m-0 align-middle">
-                            <thead class="table-dark"><tr><th>Estudiante</th><th>Materia</th><th>Estado</th><th>Calificar (Sobre 10)</th><th>Observaciones (Obligatorio si Nota <= 7)</th><th>Acción</th></tr></thead>
+                            <thead class="table-dark"><tr><th>Estudiante</th><th>Materia</th><th>Estado</th><th>Calificar</th><th>Observaciones</th><th>Acción</th></tr></thead>
                             <tbody>
                                 {% for t in todas_tareas %}
                                 <tr>
                                     <form action="/grade_task" method="POST">
                                         <input type="hidden" name="tarea_id" value="{{ t.id }}">
-                                        <td><strong><i class="fa-solid fa-user-graduate text-secondary"></i> {{ t.estudiante_nombre }}</strong></td>
+                                        <td><strong>{{ t.estudiante_nombre }}</strong></td>
                                         <td>{{ t.materia }}</td>
                                         <td><span class="badge bg-{{ 'success' if t.estado == 'Calificado' else 'warning text-dark' }}">{{ t.estado }}</span></td>
-                                        <td style="width: 120px;">
-                                            <input type="number" name="nota" class="form-control form-control-sm" min="0" max="10" value="{{ t.nota if t.nota else '' }}" required>
-                                        </td>
-                                        <td>
-                                            <input type="text" name="feedback" class="form-control form-control-sm" placeholder="Escribe tu retroalimentación..." value="{{ t.feedback if t.feedback else '' }}">
-                                        </td>
-                                        <td><button type="submit" class="btn btn-sm btn-primary"><i class="fa-solid fa-floppy-disk"></i> Guardar</button></td>
+                                        <td style="width: 100px;"><input type="number" name="nota" class="form-control form-control-sm" min="0" max="10" value="{{ t.nota if t.nota else '' }}" required></td>
+                                        <td><input type="text" name="feedback" class="form-control form-control-sm" value="{{ t.feedback if t.feedback else '' }}"></td>
+                                        <td><button type="submit" class="btn btn-sm btn-primary">Guardar</button></td>
                                     </form>
                                 </tr>
                                 {% else %}
-                                <tr><td colspan="6" class="text-center p-4 text-muted">No hay entregas registradas en el sistema.</td></tr>
+                                <tr><td colspan="6" class="text-center p-4 text-muted">No hay entregas.</td></tr>
                                 {% endfor %}
                             </tbody>
                         </table>
@@ -217,13 +227,72 @@ HTML_TEMPLATE = """
                 {% endif %}
             </div>
 
-            <!-- TAB: FORO / CHAT -->
+            <!-- TAB: CHAT PRIVADO (NUEVO) -->
+            <div class="tab-pane fade" id="chat_privado">
+                <div class="row">
+                    <!-- Enviar Mensaje -->
+                    <div class="col-md-4">
+                        <div class="card shadow-sm mb-3">
+                            <div class="card-header bg-primary text-white"><i class="fa-solid fa-pen-to-square"></i> Nuevo Mensaje Directo</div>
+                            <div class="card-body">
+                                <form action="/send_private" method="POST">
+                                    <div class="mb-3">
+                                        <label class="form-label text-muted small">Selecciona a quién escribirle:</label>
+                                        <select name="destinatario_id" class="form-select shadow-sm" required>
+                                            <option value="" disabled selected>Contactos de la institución...</option>
+                                            {% for u in all_users %}
+                                                {% if u.id != user.id %}
+                                                <option value="{{ u.id }}">{{ u.username }} ({{ u.role }})</option>
+                                                {% endif %}
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                    <div class="mb-3">
+                                        <textarea name="texto" class="form-control shadow-sm" rows="4" placeholder="Escribe tu mensaje privado aquí..." required></textarea>
+                                    </div>
+                                    <button type="submit" class="btn btn-primary w-100"><i class="fa-solid fa-paper-plane"></i> Enviar Mensaje</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Bandeja de Entrada / Salida -->
+                    <div class="col-md-8">
+                        <div class="card shadow-sm">
+                            <div class="card-header bg-dark text-white"><i class="fa-solid fa-inbox"></i> Mis Conversaciones Privadas</div>
+                            <div class="card-body" style="height: 400px; overflow-y: auto;">
+                                {% for mp in mensajes_privados %}
+                                    {% if mp.remitente_id == user.id %}
+                                        <!-- Mensaje Enviado (Derecha) -->
+                                        <div class="msg-privado-enviado shadow-sm">
+                                            <small class="text-muted" style="font-size:0.7em;">{{ mp.fecha }}</small><br>
+                                            <span class="text-muted small">Tú escribiste a <strong>{{ mp.destinatario_nombre }}</strong>:</span><br>
+                                            <span>{{ mp.texto }}</span>
+                                        </div>
+                                    {% else %}
+                                        <!-- Mensaje Recibido (Izquierda) -->
+                                        <div class="msg-privado-recibido shadow-sm">
+                                            <small class="text-muted" style="font-size:0.7em;">{{ mp.fecha }}</small><br>
+                                            <span class="text-muted small"><strong><i class="fa-solid fa-user me-1"></i> {{ mp.remitente_nombre }}</strong> te escribió:</span><br>
+                                            <span>{{ mp.texto }}</span>
+                                        </div>
+                                    {% endif %}
+                                {% else %}
+                                    <div class="text-center text-muted mt-5">
+                                        <i class="fa-solid fa-envelope-open-text fa-3x mb-3"></i>
+                                        <p>No tienes mensajes privados aún.</p>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB: FORO GENERAL -->
             <div class="tab-pane fade" id="foro">
                 <div class="card shadow-sm">
-                    <div class="card-header card-header-custom d-flex justify-content-between">
-                        <span>Foro Institucional General</span>
-                        <span class="badge bg-light text-dark"><i class="fa-solid fa-circle text-success" style="font-size: 8px;"></i> Online</span>
-                    </div>
+                    <div class="card-header card-header-custom">Foro Institucional General</div>
                     <div class="card-body bg-light">
                         <div class="chat-box mb-3" id="chatbox">
                             {% for m in mensajes %}
@@ -234,19 +303,17 @@ HTML_TEMPLATE = """
                                 </div>
                                 <div>{{ m.texto }}</div>
                             </div>
-                            {% else %}
-                            <p class="text-center text-muted mt-5">No hay mensajes aún. ¡Sé el primero en saludar!</p>
                             {% endfor %}
                         </div>
                         <form action="/send_msg" method="POST" class="d-flex">
-                            <input type="text" name="mensaje" class="form-control me-2" placeholder="Escribe un mensaje al grupo..." required autocomplete="off">
-                            <button type="submit" class="btn btn-primary"><i class="fa-solid fa-paper-plane"></i> Enviar</button>
+                            <input type="text" name="mensaje" class="form-control me-2" placeholder="Mensaje público..." required autocomplete="off">
+                            <button type="submit" class="btn btn-primary">Enviar</button>
                         </form>
                     </div>
                 </div>
             </div>
 
-            <!-- TAB: ADMINISTRADOR -->
+            <!-- TAB: ADMIN -->
             {% if user.role == 'Administrador' %}
             <div class="tab-pane fade" id="admin">
                 <div class="row">
@@ -255,7 +322,7 @@ HTML_TEMPLATE = """
                             <div class="card-header bg-dark text-white">Nuevo Usuario</div>
                             <div class="card-body">
                                 <form action="/add_user" method="POST">
-                                    <div class="mb-2"><input type="text" name="new_username" class="form-control" placeholder="Nombre de usuario" required></div>
+                                    <div class="mb-2"><input type="text" name="new_username" class="form-control" placeholder="Nombre" required></div>
                                     <div class="mb-2"><input type="password" name="new_password" class="form-control" placeholder="Contraseña" required></div>
                                     <div class="mb-3">
                                         <select name="new_role" class="form-select">
@@ -264,19 +331,19 @@ HTML_TEMPLATE = """
                                             <option value="Administrador">Administrador</option>
                                         </select>
                                     </div>
-                                    <button type="submit" class="btn btn-success w-100"><i class="fa-solid fa-user-plus"></i> Registrar</button>
+                                    <button type="submit" class="btn btn-success w-100">Registrar</button>
                                 </form>
                             </div>
                         </div>
                     </div>
                     <div class="col-md-8">
                         <div class="card shadow-sm">
-                            <div class="card-header bg-dark text-white">Directorio de Usuarios</div>
+                            <div class="card-header bg-dark text-white">Directorio PaaS</div>
                             <table class="table table-sm table-striped m-0">
-                                <thead><tr><th>ID</th><th>Usuario</th><th>Rol</th><th>Contraseña Cifrada (SHA256)</th></tr></thead>
+                                <thead><tr><th>ID</th><th>Usuario</th><th>Rol</th></tr></thead>
                                 <tbody>
                                     {% for u in all_users %}
-                                    <tr><td>{{ u.id }}</td><td>{{ u.username }}</td><td><span class="badge bg-secondary">{{ u.role }}</span></td><td style="font-size:10px; color:#999; font-family:monospace;">{{ u.password_hash[:40] }}...</td></tr>
+                                    <tr><td>{{ u.id }}</td><td>{{ u.username }}</td><td><span class="badge bg-secondary">{{ u.role }}</span></td></tr>
                                     {% endfor %}
                                 </tbody>
                             </table>
@@ -288,10 +355,8 @@ HTML_TEMPLATE = """
         </div>
     </div>
     
-    <!-- Scripts de Bootstrap para pestañas y alertas -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        // Auto-scroll del chat al fondo
         var chatBox = document.getElementById("chatbox");
         if(chatBox) chatBox.scrollTop = chatBox.scrollHeight;
     </script>
@@ -308,7 +373,7 @@ def login():
         if user and check_password_hash(user.password_hash, request.form['password']):
             session['user_id'] = user.id
             return redirect('/dashboard')
-        flash('Credenciales incorrectas o usuario no registrado.', 'error')
+        flash('Credenciales incorrectas.', 'error')
     return render_template_string(HTML_TEMPLATE, user=None)
 
 @app.route('/dashboard')
@@ -316,12 +381,37 @@ def dashboard():
     if 'user_id' not in session: return redirect('/')
     user = User.query.get(session['user_id'])
     
-    all_users = User.query.all() if user.role == 'Administrador' else []
+    # Todos los usuarios necesitan "all_users" ahora para poder elegir a quién enviarle el mensaje privado
+    all_users = User.query.all() 
     tareas = Tarea.query.filter_by(estudiante_id=user.id).all() if user.role == 'Estudiante' else []
     todas_tareas = Tarea.query.all() if user.role in ['Docente', 'Administrador'] else []
     mensajes = Mensaje.query.order_by(Mensaje.id.asc()).all()
     
-    return render_template_string(HTML_TEMPLATE, user=user, all_users=all_users, tareas=tareas, todas_tareas=todas_tareas, mensajes=mensajes)
+    # Filtrar solo los mensajes privados donde yo soy el remitente o el destinatario
+    mensajes_privados = MensajePrivado.query.filter(
+        (MensajePrivado.remitente_id == user.id) | (MensajePrivado.destinatario_id == user.id)
+    ).order_by(MensajePrivado.id.desc()).all()
+    
+    return render_template_string(HTML_TEMPLATE, user=user, all_users=all_users, tareas=tareas, todas_tareas=todas_tareas, mensajes=mensajes, mensajes_privados=mensajes_privados)
+
+@app.route('/send_private', methods=['POST'])
+def send_private():
+    if 'user_id' in session:
+        remitente = User.query.get(session['user_id'])
+        destinatario = User.query.get(request.form['destinatario_id'])
+        hora_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
+        
+        db.session.add(MensajePrivado(
+            remitente_id=remitente.id, 
+            remitente_nombre=remitente.username,
+            destinatario_id=destinatario.id, 
+            destinatario_nombre=destinatario.username,
+            texto=request.form['texto'], 
+            fecha=hora_actual
+        ))
+        db.session.commit()
+        flash(f'Mensaje privado enviado a {destinatario.username}.', 'success')
+    return redirect('/dashboard')
 
 @app.route('/add_user', methods=['POST'])
 def add_user():
@@ -341,7 +431,7 @@ def submit_task():
         user = User.query.get(session['user_id'])
         db.session.add(Tarea(estudiante_id=user.id, estudiante_nombre=user.username, materia=request.form['materia'], estado='Enviado para Revisión'))
         db.session.commit()
-        flash(f'Tu trabajo de {request.form["materia"]} fue enviado al docente.', 'success')
+        flash(f'Tu trabajo fue enviado al docente.', 'success')
     return redirect('/dashboard')
 
 @app.route('/grade_task', methods=['POST'])
@@ -351,16 +441,15 @@ def grade_task():
         nota = int(request.form['nota'])
         feedback = request.form['feedback'].strip()
         
-        # LÓGICA EXIGIDA: Si la nota es <= 7, el feedback es obligatorio
         if nota <= 7 and not feedback:
-            flash(f'Atención: No se guardó la calificación del alumno {tarea.estudiante_nombre}. Es obligatorio escribir una retroalimentación/recomendación para notas menores o iguales a 7.', 'error')
+            flash(f'Atención: Es obligatorio escribir una retroalimentación para notas menores o iguales a 7.', 'error')
             return redirect('/dashboard')
             
         tarea.nota = nota
         tarea.feedback = feedback
         tarea.estado = 'Calificado'
         db.session.commit()
-        flash(f'Calificación guardada y publicada para el estudiante {tarea.estudiante_nombre}.', 'success')
+        flash(f'Calificación guardada para el estudiante {tarea.estudiante_nombre}.', 'success')
     return redirect('/dashboard')
 
 @app.route('/send_msg', methods=['POST'])
