@@ -3,6 +3,8 @@ from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import os
 
 app = Flask(__name__)
@@ -16,6 +18,30 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 db = SQLAlchemy(app)
+
+# --- HARDENING DE SEGURIDAD ---
+# 1. Límite de peticiones para evitar DoS de Capa 7 y Fuerza Bruta
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["500 per day", "100 per hour"],
+    storage_uri="memory://"
+)
+
+# 2. Control estricto de extensiones de archivos (Prevención de ejecución remota de código - RCE)
+ALLOWED_EXTENSIONS = {'pdf', 'png', 'jpg', 'jpeg', 'docx'}
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+# 3. Inyección de Cabeceras de Seguridad HTTP (Mitigación para escáneres de vulnerabilidades)
+@app.after_request
+def add_security_headers(response):
+    response.headers['X-Frame-Options'] = 'DENY' # Previene Clickjacking
+    response.headers['X-Content-Type-Options'] = 'nosniff' # Previene MIME-sniffing
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains' # Fuerza HTTPS (HSTS)
+    response.headers['X-XSS-Protection'] = '1; mode=block' # Filtro XSS básico
+    return response
 
 # --- MODELOS ---
 class User(db.Model):
@@ -445,6 +471,7 @@ def dashboard():
 
 # NUEVA RUTA INTEGRADA: Subir Tarea CON Archivo
 @app.route('/submit_task', methods=['POST'])
+@limiter.limit("10 per minute") # Evita que saturen el disco subiendo basura
 def submit_task():
     if 'user_id' not in session: return redirect('/')
     user = User.query.get(session['user_id'])
@@ -453,13 +480,18 @@ def submit_task():
     filename = "Sin_Archivo"
     
     if file and file.filename != '':
+        # DEFENSA: Verificar que no sea un script malicioso (.sh, .py, .php)
+        if not allowed_file(file.filename):
+            flash('Error de Seguridad: Tipo de archivo no permitido. Solo PDF, PNG, JPG o DOCX.', 'error')
+            return redirect('/dashboard')
+            
         filename = secure_filename(file.filename)
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
     
     hora_actual = datetime.now().strftime("%d/%m/%Y %H:%M")
     db.session.add(Tarea(estudiante_id=user.id, estudiante_nombre=user.username, materia=request.form['materia'], archivo_nombre=filename, estado='Enviado para Revisión', fecha=hora_actual))
     db.session.commit()
-    flash(f'Tu trabajo fue enviado al docente con el archivo adjunto.', 'success')
+    flash(f'Tu trabajo fue enviado al docente de forma segura.', 'success')
     return redirect('/dashboard')
 
 @app.route('/download/<filename>')
