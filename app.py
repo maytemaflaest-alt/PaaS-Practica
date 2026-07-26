@@ -5,9 +5,10 @@ from datetime import datetime
 import os
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'clave_super_segura_v3')
+app.secret_key = os.environ.get('SECRET_KEY', 'clave_super_segura_v5')
 
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///campus_v3.db'
+# Usamos V5 para garantizar una base de datos fresca y sin errores
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///campus_v5.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -34,7 +35,6 @@ class Mensaje(db.Model):
     texto = db.Column(db.Text)
     fecha = db.Column(db.String(20))
 
-# NUEVA TABLA: Mensajes Privados
 class MensajePrivado(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     remitente_id = db.Column(db.Integer)
@@ -44,19 +44,21 @@ class MensajePrivado(db.Model):
     texto = db.Column(db.Text)
     fecha = db.Column(db.String(20))
 
+# --- INICIALIZACIÓN SEGURA (Corrección del error de Edisson y Timoteo) ---
 with app.app_context():
     db.create_all()
-    if not User.query.first():
-        # Usuarios Base
+    # Ahora verificamos UNO POR UNO. Si no existen, se crean. Nunca se perderán.
+    if not User.query.filter_by(username='admin').first():
         db.session.add(User(username='admin', password_hash=generate_password_hash('AdminSeguro2026!'), role='Administrador'))
+    if not User.query.filter_by(username='alumno').first():
         db.session.add(User(username='alumno', password_hash=generate_password_hash('Estudiante#1'), role='Estudiante'))
+    if not User.query.filter_by(username='profesor').first():
         db.session.add(User(username='profesor', password_hash=generate_password_hash('ProfeCyber24'), role='Docente'))
-        
-        # PRESERVACIÓN DE TUS DATOS (Edisson y Timoteo se auto-crearán)
-        # Nota: Les he puesto la contraseña genérica "Estudiante2026" a ambos.
+    if not User.query.filter_by(username='Edisson').first():
         db.session.add(User(username='Edisson', password_hash=generate_password_hash('Estudiante2026'), role='Estudiante'))
+    if not User.query.filter_by(username='Timoteo').first():
         db.session.add(User(username='Timoteo', password_hash=generate_password_hash('Estudiante2026'), role='Estudiante'))
-        db.session.commit()
+    db.session.commit()
 
 # --- VISTAS HTML ---
 HTML_TEMPLATE = """
@@ -149,7 +151,7 @@ HTML_TEMPLATE = """
             </li>
             {% if user.role == 'Administrador' %}
             <li class="nav-item">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#admin"><i class="fa-solid fa-gears me-1"></i> Administración</button>
+                <button class="nav-link text-danger fw-bold" data-bs-toggle="tab" data-bs-target="#admin"><i class="fa-solid fa-gears me-1"></i> Administración</button>
             </li>
             {% endif %}
         </ul>
@@ -227,10 +229,9 @@ HTML_TEMPLATE = """
                 {% endif %}
             </div>
 
-            <!-- TAB: CHAT PRIVADO (NUEVO) -->
+            <!-- TAB: CHAT PRIVADO -->
             <div class="tab-pane fade" id="chat_privado">
                 <div class="row">
-                    <!-- Enviar Mensaje -->
                     <div class="col-md-4">
                         <div class="card shadow-sm mb-3">
                             <div class="card-header bg-primary text-white"><i class="fa-solid fa-pen-to-square"></i> Nuevo Mensaje Directo</div>
@@ -239,7 +240,7 @@ HTML_TEMPLATE = """
                                     <div class="mb-3">
                                         <label class="form-label text-muted small">Selecciona a quién escribirle:</label>
                                         <select name="destinatario_id" class="form-select shadow-sm" required>
-                                            <option value="" disabled selected>Contactos de la institución...</option>
+                                            <option value="" disabled selected>Contactos disponibles...</option>
                                             {% for u in all_users %}
                                                 {% if u.id != user.id %}
                                                 <option value="{{ u.id }}">{{ u.username }} ({{ u.role }})</option>
@@ -256,21 +257,18 @@ HTML_TEMPLATE = """
                         </div>
                     </div>
                     
-                    <!-- Bandeja de Entrada / Salida -->
                     <div class="col-md-8">
                         <div class="card shadow-sm">
                             <div class="card-header bg-dark text-white"><i class="fa-solid fa-inbox"></i> Mis Conversaciones Privadas</div>
                             <div class="card-body" style="height: 400px; overflow-y: auto;">
                                 {% for mp in mensajes_privados %}
                                     {% if mp.remitente_id == user.id %}
-                                        <!-- Mensaje Enviado (Derecha) -->
                                         <div class="msg-privado-enviado shadow-sm">
                                             <small class="text-muted" style="font-size:0.7em;">{{ mp.fecha }}</small><br>
                                             <span class="text-muted small">Tú escribiste a <strong>{{ mp.destinatario_nombre }}</strong>:</span><br>
                                             <span>{{ mp.texto }}</span>
                                         </div>
                                     {% else %}
-                                        <!-- Mensaje Recibido (Izquierda) -->
                                         <div class="msg-privado-recibido shadow-sm">
                                             <small class="text-muted" style="font-size:0.7em;">{{ mp.fecha }}</small><br>
                                             <span class="text-muted small"><strong><i class="fa-solid fa-user me-1"></i> {{ mp.remitente_nombre }}</strong> te escribió:</span><br>
@@ -313,11 +311,12 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
-            <!-- TAB: ADMIN -->
+            <!-- TAB: ADMIN (CON FUNCIÓN DE RESETEO DE CONTRASEÑAS) -->
             {% if user.role == 'Administrador' %}
             <div class="tab-pane fade" id="admin">
                 <div class="row">
-                    <div class="col-md-4">
+                    <!-- CREAR USUARIO -->
+                    <div class="col-md-3">
                         <div class="card shadow-sm">
                             <div class="card-header bg-dark text-white">Nuevo Usuario</div>
                             <div class="card-body">
@@ -336,17 +335,31 @@ HTML_TEMPLATE = """
                             </div>
                         </div>
                     </div>
-                    <div class="col-md-8">
+                    <!-- DIRECTORIO Y GESTIÓN DE CREDENCIALES -->
+                    <div class="col-md-9">
                         <div class="card shadow-sm">
-                            <div class="card-header bg-dark text-white">Directorio PaaS</div>
-                            <table class="table table-sm table-striped m-0">
-                                <thead><tr><th>ID</th><th>Usuario</th><th>Rol</th></tr></thead>
-                                <tbody>
-                                    {% for u in all_users %}
-                                    <tr><td>{{ u.id }}</td><td>{{ u.username }}</td><td><span class="badge bg-secondary">{{ u.role }}</span></td></tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
+                            <div class="card-header bg-dark text-white">Directorio y Gestión de Credenciales</div>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-striped m-0 align-middle">
+                                    <thead class="table-light"><tr><th>ID</th><th>Usuario</th><th>Rol</th><th>Cambiar Contraseña</th></tr></thead>
+                                    <tbody>
+                                        {% for u in all_users %}
+                                        <tr>
+                                            <td>{{ u.id }}</td>
+                                            <td><strong>{{ u.username }}</strong></td>
+                                            <td><span class="badge bg-secondary">{{ u.role }}</span></td>
+                                            <td>
+                                                <form action="/reset_password" method="POST" class="d-flex m-0" style="max-width: 280px;">
+                                                    <input type="hidden" name="user_id" value="{{ u.id }}">
+                                                    <input type="password" name="new_password" class="form-control form-control-sm me-2" placeholder="Nueva clave" required>
+                                                    <button type="submit" class="btn btn-sm btn-warning text-dark fw-bold"><i class="fa-solid fa-key"></i> Actualizar</button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -381,13 +394,11 @@ def dashboard():
     if 'user_id' not in session: return redirect('/')
     user = User.query.get(session['user_id'])
     
-    # Todos los usuarios necesitan "all_users" ahora para poder elegir a quién enviarle el mensaje privado
     all_users = User.query.all() 
     tareas = Tarea.query.filter_by(estudiante_id=user.id).all() if user.role == 'Estudiante' else []
     todas_tareas = Tarea.query.all() if user.role in ['Docente', 'Administrador'] else []
     mensajes = Mensaje.query.order_by(Mensaje.id.asc()).all()
     
-    # Filtrar solo los mensajes privados donde yo soy el remitente o el destinatario
     mensajes_privados = MensajePrivado.query.filter(
         (MensajePrivado.remitente_id == user.id) | (MensajePrivado.destinatario_id == user.id)
     ).order_by(MensajePrivado.id.desc()).all()
@@ -425,13 +436,24 @@ def add_user():
             flash(f'Usuario {nuevo_user} creado con éxito.', 'success')
     return redirect('/dashboard')
 
+# NUEVA RUTA PARA RESTABLECER CONTRASEÑAS DESDE ADMIN
+@app.route('/reset_password', methods=['POST'])
+def reset_password():
+    if 'user_id' in session and User.query.get(session['user_id']).role == 'Administrador':
+        target_user = User.query.get(request.form['user_id'])
+        if target_user:
+            target_user.password_hash = generate_password_hash(request.form['new_password'])
+            db.session.commit()
+            flash(f'¡La contraseña del usuario {target_user.username} ha sido actualizada exitosamente!', 'success')
+    return redirect('/dashboard')
+
 @app.route('/submit_task', methods=['POST'])
 def submit_task():
     if 'user_id' in session:
         user = User.query.get(session['user_id'])
         db.session.add(Tarea(estudiante_id=user.id, estudiante_nombre=user.username, materia=request.form['materia'], estado='Enviado para Revisión'))
         db.session.commit()
-        flash(f'Tu trabajo fue enviado al docente.', 'success')
+        flash(f'Tu trabajo de {request.form["materia"]} fue enviado.', 'success')
     return redirect('/dashboard')
 
 @app.route('/grade_task', methods=['POST'])
